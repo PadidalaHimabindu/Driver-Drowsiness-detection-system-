@@ -1,42 +1,47 @@
+
+
 from tkinter import *
-import tkinter
+import threading
 from scipy.spatial import distance as dist
 from imutils import face_utils
-import numpy as np
 import imutils
 import dlib
 import cv2
 
-
-main = tkinter.Tk()
+# ---------------- MAIN WINDOW ----------------
+main = Tk()
 main.title("Driver Drowsiness Monitoring")
-main.geometry("500x400")
+main.geometry("700x600")
+main.config(bg="#f0f2f5")
 
-def EAR(drivereye):
-    point1 = dist.euclidean(drivereye[1], drivereye[5])
-    point2 = dist.euclidean(drivereye[2], drivereye[4])
-    # compute the euclidean distance between the horizontal
-    distance = dist.euclidean(drivereye[0], drivereye[3])
-    # compute the eye aspect ratio
-    ear_aspect_ratio = (point1 + point2) / (2.0 * distance)
-    return ear_aspect_ratio
+card = Frame(main, bg="white", bd=2, relief="ridge",
+             width=500, height=450)
+card.place(relx=0.5, rely=0.5, anchor="center")
+card.pack_propagate(False)
 
-def MOR(drivermouth):
-    # compute the euclidean distances between the horizontal
-    point   = dist.euclidean(drivermouth[0], drivermouth[6])
-    # compute the euclidean distances between the vertical
-    point1  = dist.euclidean(drivermouth[2], drivermouth[10])
-    point2  = dist.euclidean(drivermouth[4], drivermouth[8])
-    # taking average
-    Ypoint   = (point1+point2)/2.0
-    # compute mouth aspect ratio
-    mouth_aspect_ratio = Ypoint/point
-    return mouth_aspect_ratio
-    
-def startMonitoring():
-    pathlabel.config(text="          Webcam Connected Successfully")
+running = False
+
+# ---------------- EAR FUNCTION ----------------
+def EAR(eye):
+    A = dist.euclidean(eye[1], eye[5])
+    B = dist.euclidean(eye[2], eye[4])
+    C = dist.euclidean(eye[0], eye[3])
+    return (A + B) / (2.0 * C)
+
+# ---------------- MOR FUNCTION ----------------
+def MOR(mouth):
+    A = dist.euclidean(mouth[2], mouth[10])
+    B = dist.euclidean(mouth[4], mouth[8])
+    C = dist.euclidean(mouth[0], mouth[6])
+    return ((A + B) / 2.0) / C
+
+# ---------------- CAMERA LOOP ----------------
+def camera_loop():
+    global running
+
     webcamera = cv2.VideoCapture(0)
-    svm_predictor_path = 'SVMclassifier.dat'
+    predictor_path = "SVMclassifier.dat"
+
     EYE_AR_THRESH = 0.25
     EYE_AR_CONSEC_FRAMES = 10
     MOU_AR_THRESH = 0.75
@@ -44,81 +49,118 @@ def startMonitoring():
     COUNTER = 0
     yawnStatus = False
     yawns = 0
-    svm_detector = dlib.get_frontal_face_detector()
-    svm_predictor = dlib.shape_predictor(svm_predictor_path)
+
+    detector = dlib.get_frontal_face_detector()
+    predictor = dlib.shape_predictor(predictor_path)
+
     (lStart, lEnd) = face_utils.FACIAL_LANDMARKS_IDXS["left_eye"]
     (rStart, rEnd) = face_utils.FACIAL_LANDMARKS_IDXS["right_eye"]
     (mStart, mEnd) = face_utils.FACIAL_LANDMARKS_IDXS["mouth"]
-    while True:
+
+    while running:
         ret, frame = webcamera.read()
+        if not ret:
+            break
+
         frame = imutils.resize(frame, width=640)
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        rects = detector(gray, 0)
         prev_yawn_status = yawnStatus
-        rects = svm_detector(gray, 0)
+
         for rect in rects:
-            shape = svm_predictor(gray, rect)
+            shape = predictor(gray, rect)
             shape = face_utils.shape_to_np(shape)
+
             leftEye = shape[lStart:lEnd]
             rightEye = shape[rStart:rEnd]
             mouth = shape[mStart:mEnd]
+
             leftEAR = EAR(leftEye)
             rightEAR = EAR(rightEye)
-            mouEAR = MOR(mouth)
             ear = (leftEAR + rightEAR) / 2.0
-            leftEyeHull = cv2.convexHull(leftEye)
-            rightEyeHull = cv2.convexHull(rightEye)
-            mouthHull = cv2.convexHull(mouth)
-            cv2.drawContours(frame, [leftEyeHull], -1, (0, 255, 255), 1)
-            cv2.drawContours(frame, [rightEyeHull], -1, (0, 255, 255), 1)
-            cv2.drawContours(frame, [mouthHull], -1, (0, 255, 0), 1)
+            mouEAR = MOR(mouth)
+
+            # Draw contours
+            cv2.drawContours(frame, [cv2.convexHull(leftEye)], -1, (0,255,255), 1)
+            cv2.drawContours(frame, [cv2.convexHull(rightEye)], -1, (0,255,255), 1)
+            cv2.drawContours(frame, [cv2.convexHull(mouth)], -1, (0,255,0), 1)
+
+            # Eye detection
             if ear < EYE_AR_THRESH:
                 COUNTER += 1
-                cv2.putText(frame, "Eyes Closed ", (10, 30),cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                cv2.putText(frame, "Eyes Closed", (10,30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255),2)
+
                 if COUNTER >= EYE_AR_CONSEC_FRAMES:
-                    cv2.putText(frame, "DROWSINESS ALERT!", (10, 50),cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    cv2.putText(frame, "DROWSINESS ALERT!", (10,60),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,255),3)
             else:
                 COUNTER = 0
-                cv2.putText(frame, "Eyes Open ", (10, 30),cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            cv2.putText(frame, "EAR: {:.2f}".format(ear), (480, 30),cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                cv2.putText(frame, "Eyes Open", (10,30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0),2)
+
+            # Yawn detection
             if mouEAR > MOU_AR_THRESH:
-                cv2.putText(frame, "Yawning, DROWSINESS ALERT! ", (10, 70),cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                cv2.putText(frame, "Yawning Detected!", (10,90),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255),2)
                 yawnStatus = True
-                output_text = "Yawn Count: " + str(yawns + 1)
-                cv2.putText(frame, output_text, (10,100),cv2.FONT_HERSHEY_SIMPLEX, 0.7,(255,0,0),2)
+                cv2.putText(frame, "Yawn Count: " + str(yawns+1),
+                            (10,120), cv2.FONT_HERSHEY_SIMPLEX,0.7,(255,0,0),2)
             else:
                 yawnStatus = False
-            if prev_yawn_status == True and yawnStatus == False:
-                yawns+=1
-            cv2.putText(frame, "MAR: {:.2f}".format(mouEAR), (480, 60),cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-            cv2.putText(frame,"Visual Behaviour & Machine Learning Drowsiness Detection @ Drowsiness",(370,470),cv2.FONT_HERSHEY_COMPLEX,0.6,(153,51,102),1)
-        cv2.imshow("Frame", frame)
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord("q"):
+
+            if prev_yawn_status and not yawnStatus:
+                yawns += 1
+
+            # Show EAR & MAR
+            cv2.putText(frame, "EAR: {:.2f}".format(ear),
+                        (480,30), cv2.FONT_HERSHEY_SIMPLEX,0.7,(0,0,255),2)
+            cv2.putText(frame, "MAR: {:.2f}".format(mouEAR),
+                        (480,60), cv2.FONT_HERSHEY_SIMPLEX,0.7,(0,0,255),2)
+
+        cv2.imshow("Driver Monitoring", frame)
+
+        if cv2.waitKey(1) & 0xFF == ord("q"):
             break
+
+    webcamera.release()
     cv2.destroyAllWindows()
-    webcamera.release()    
+    status_label.config(text="Status: Stopped", fg="red")
+    running = False
 
+# ---------------- BUTTON FUNCTIONS ----------------
+def startMonitoring():
+    global running
+    if not running:
+        running = True
+        status_label.config(text="Status: Monitoring...", fg="blue")
+        threading.Thread(target=camera_loop).start()
 
-  
+def stopMonitoring():
+    global running
+    running = False
 
-font = ('times', 16, 'bold')
-title = Label(main, text='Driver Drowsiness Monitoring System using Visual\n               Behaviour and Machine Learning',anchor=W, justify=LEFT)
-title.config(bg='black', fg='white')  
-title.config(font=font)           
-title.config(height=3, width=120)       
-title.place(x=0,y=5)
+# ---------------- UI ----------------
+Label(card, text="Driver Drowsiness Detection",
+      font=("Arial",20,"bold"),
+      bg="white", fg="#2c3e50").pack(pady=20)
 
+Button(card, text="Start Monitoring",
+       command=startMonitoring,
+       bg="#2e86de", fg="white",
+       font=("Arial",12,"bold"),
+       width=20).pack(pady=10)
 
-font1 = ('times', 14, 'bold')
-upload = Button(main, text="Start Behaviour Monitoring Using Webcam", command=startMonitoring)
-upload.place(x=50,y=200)
-upload.config(font=font1)  
+Button(card, text="Stop Monitoring",
+       command=stopMonitoring,
+       bg="#e74c3c", fg="white",
+       font=("Arial",12,"bold"),
+       width=20).pack(pady=10)
 
-pathlabel = Label(main)
-pathlabel.config(bg='DarkOrange1', fg='white')  
-pathlabel.config(font=font1)           
-pathlabel.place(x=50,y=250)
+status_label = Label(card, text="Status: Idle",
+                     font=("Arial",12,"bold"),
+                     fg="green", bg="white")
+status_label.pack(pady=20)
 
-
-main.config(bg='chocolate1')
 main.mainloop()
